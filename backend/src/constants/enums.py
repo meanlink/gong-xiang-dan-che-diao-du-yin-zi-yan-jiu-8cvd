@@ -8,3 +8,7 @@ class JobStatus(str, Enum):
     running = 'running'
     completed = 'completed'
     failed = 'failed'
+class DeliveryStatus(str, Enum):
+    pending = 'pending'
+    ready = 'ready'
+    failed = 'failed'

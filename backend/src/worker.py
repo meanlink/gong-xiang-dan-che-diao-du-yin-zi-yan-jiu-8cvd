@@ -4,9 +4,9 @@ from sqlalchemy import select
 from redis import Redis
 from src.config.database import Session
 from src.config.settings import REDIS_URL
-from src.models import Job, Dataset, Report
+from src.models import Job, Dataset
 from src.services.business import analyze
-from src.services.reports import deliver
+from src.services import reports
 from src.services.audit import record
 logging.basicConfig(level=logging.INFO)
 def execute(job_id):
@@ -30,9 +30,11 @@ def tick():
         queued=list(db.scalars(select(Job.id).where(Job.status=='queued').limit(3)))
     for job_id in queued:execute(job_id)
     with Session() as db:
-        for r in db.scalars(select(Report).where(Report.enabled==True,Report.next_run<=time.time())):
-            d=deliver(db,r)
-            if d:record(db,'worker','report.delivered',{'id':r.id,'delivery':d.id})
+        # 先按到期时点登记（含停机漏期），再生成文件；登记与生成分离，中途停机可恢复。
+        reports.register_due(db)
+        for d in reports.process_pending(db):
+            if d.status=='ready':record(db,'worker','report.delivered',{'id':d.report_id,'delivery':d.id,'scheduled_at':d.scheduled_at})
+            else:record(db,'worker','report.failed',{'id':d.report_id,'delivery':d.id,'scheduled_at':d.scheduled_at,'error':d.error})
         db.commit()
 def main():
     r=Redis.from_url(REDIS_URL,socket_timeout=3)
